@@ -89,7 +89,7 @@ class MsGraph
     /**
      * @throws Exception
      */
-    public function connect(?string $id = null): Redirector|RedirectResponse
+    public function connect(?string $id = null, array $state = []): Redirector|RedirectResponse
     {
         $id = $this->getUserId($id);
 
@@ -111,7 +111,7 @@ class MsGraph
         }
 
         if (! request()->has('code') && ! $this->isConnected($id)) {
-            return redirect($provider->getAuthorizationUrl());
+            return redirect($provider->getAuthorizationUrl($state));
         }
 
         if (request()->has('code')) {
