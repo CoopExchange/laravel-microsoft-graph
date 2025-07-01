@@ -7,11 +7,15 @@ use Exception;
 
 class Emails extends MsGraphAdmin
 {
+    private ?bool $delta = null;
+
     private string $userId = '';
 
-    private string $top = '';
+    private string $top = '100';
 
-    private string $skip = '';
+    private string $skip = '0';
+
+    private string $search = '';
 
     private string $subject = '';
 
@@ -106,6 +110,13 @@ class Emails extends MsGraphAdmin
         return $this;
     }
 
+    public function delta(?bool $delta = true): static
+    {
+        $this->delta = $delta;
+
+        return $this;
+    }
+
     /**
      * @throws Exception
      */
@@ -117,6 +128,11 @@ class Emails extends MsGraphAdmin
 
         $top = request('top', $this->top);
         $skip = request('skip', $this->skip);
+        $search = request('search', $this->search);
+
+        if (filled($search) && $this->delta) {
+            throw new Exception('Search is not supported in delta queries.');
+        }
 
         if ($params == []) {
             $params = http_build_query([
@@ -129,8 +145,13 @@ class Emails extends MsGraphAdmin
             $params = http_build_query($params);
         }
 
-        //get messages from folderId
-        $emails = MsGraphAdmin::get('users/'.$this->userId.'/messages?'.$params);
+        // get messages from folderId
+        $messages = $this->delta ? 'messages/delta' : 'messages';
+        $emails = MsGraphAdmin::get('users/'.$this->userId.'/'.$messages.'?'.$params);
+
+        if (isset($emails->error)) {
+            throw new Exception("Graph API Error, code: {$emails->error->code}, Message: {$emails->error->message}");
+        }
 
         $data = MsGraphAdmin::getPagination($emails, $top, $skip);
 
@@ -145,7 +166,7 @@ class Emails extends MsGraphAdmin
     /**
      * @throws Exception
      */
-    public function find(string $id): MsGraphAdmin
+    public function find(string $id): array
     {
         if ($this->userId == null) {
             throw new Exception('userid is required.');
@@ -154,7 +175,7 @@ class Emails extends MsGraphAdmin
         return MsGraphAdmin::get('users/'.$this->userId.'/messages/'.$id);
     }
 
-    public function findAttachments(string $id): MsGraphAdmin
+    public function findAttachments(string $id): array
     {
         return MsGraphAdmin::get('users/'.$this->userId.'/messages/'.$id.'/attachments');
     }
@@ -163,21 +184,21 @@ class Emails extends MsGraphAdmin
     {
         $attachments = self::findAttachments($email['id']);
 
-        //replace every case of <img='cid:' with the base64 image
+        // replace every case of <img='cid:' with the base64 image
         $email['body']['content'] = preg_replace_callback(
             '~cid.*?"~',
             function (array $m) use ($attachments) {
-                //remove the last quote
+                // remove the last quote
                 $parts = explode('"', $m[0]);
 
-                //remove cid:
+                // remove cid:
                 $contentId = str_replace('cid:', '', $parts[0]);
 
-                //loop over the attachments
+                // loop over the attachments
                 foreach ($attachments['value'] as $file) {
-                    //if there is a match
+                    // if there is a match
                     if ($file['contentId'] == $contentId) {
-                        //return a base64 image with a quote
+                        // return a base64 image with a quote
                         return 'data:'.$file['contentType'].';base64,'.$file['contentBytes'].'"';
                     }
                 }
@@ -193,7 +214,7 @@ class Emails extends MsGraphAdmin
     /**
      * @throws Exception
      */
-    public function send(): MsGraphAdmin
+    public function send(): void
     {
         if (strlen($this->userId) === 0) {
             throw new Exception('userId is required.');
@@ -211,7 +232,7 @@ class Emails extends MsGraphAdmin
             throw new Exception('Comment is only used for replies and forwarding, please use body instead.');
         }
 
-        return MsGraphAdmin::post('users/'.$this->userId.'/sendMail', self::prepareEmail());
+        MsGraphAdmin::post('users/'.$this->userId.'/sendMail', self::prepareEmail());
     }
 
     /**
@@ -231,7 +252,7 @@ class Emails extends MsGraphAdmin
             throw new Exception('Body is only used for sending new emails, please use comment instead.');
         }
 
-        return MsGraphAdmin::post('users/'.$this->userId.'/messages/'.$this->id.'/replyAll', self::prepareEmail());
+        MsGraphAdmin::post('users/'.$this->userId.'/messages/'.$this->id.'/replyAll', self::prepareEmail());
     }
 
     /**
@@ -251,7 +272,7 @@ class Emails extends MsGraphAdmin
             throw new Exception('Body is only used for sending new emails, please use comment instead.');
         }
 
-        return MsGraphAdmin::post('users/'.$this->userId.'/messages/'.$this->id.'/forward', self::prepareEmail());
+        MsGraphAdmin::post('users/'.$this->userId.'/messages/'.$this->id.'/forward', self::prepareEmail());
     }
 
     /**
@@ -263,7 +284,7 @@ class Emails extends MsGraphAdmin
             throw new Exception('userId is required.');
         }
 
-        return MsGraphAdmin::delete('users/'.$this->userId.'/messages/'.$id);
+        MsGraphAdmin::delete('users/'.$this->userId.'/messages/'.$id);
     }
 
     protected function prepareEmail(): array
@@ -297,12 +318,12 @@ class Emails extends MsGraphAdmin
             }
         }
 
-        $attachmentarray = [];
+        $attachmentArray = [];
         if ($attachments != null) {
             foreach ($attachments as $file) {
                 $path = pathinfo($file);
 
-                $attachmentarray[] = [
+                $attachmentArray[] = [
                     '@odata.type' => '#microsoft.graph.fileAttachment',
                     'name' => $path['basename'],
                     'contentType' => mime_content_type($file),
@@ -330,8 +351,8 @@ class Emails extends MsGraphAdmin
         if ($bccArray != null) {
             $envelope['message']['bccRecipients'] = $bccArray;
         }
-        if ($attachmentarray != null) {
-            $envelope['message']['attachments'] = $attachmentarray;
+        if ($attachmentArray != null) {
+            $envelope['message']['attachments'] = $attachmentArray;
         }
         if ($comment != null) {
             $envelope['comment'] = $comment;
